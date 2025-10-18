@@ -11,6 +11,14 @@ let [change, createChange] = createEventType("drum:change");
 
 export type Instrument = "kicks" | "hihat" | "snare";
 
+/**
+ * 0 - off
+ * 1 - normal
+ * 2 - accent
+ */
+export type NoteState = 0|1|2;
+export type ActiveNoteState = 1|2;
+
 export class Drummer extends EventTarget {
   private audioCtx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -23,7 +31,7 @@ export class Drummer extends EventTarget {
   private current16th = 0;
   private nextNoteTime = 0;
   private intervalId: number | null = null;
-  private patterns: Record<Instrument, boolean[]>;
+  private patterns: Record<Instrument, NoteState[]>;
 
   // Tempo settings
   private readonly minBpm = 30;
@@ -44,10 +52,10 @@ export class Drummer extends EventTarget {
 
   constructor(
     tempoBpm: number = 90,
-    patterns: Record<Instrument, boolean[]> = {
-      hihat: [1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0].map(Boolean),
-      snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0].map(Boolean),
-      kicks: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0].map(Boolean),
+    patterns: Record<Instrument, NoteState[]> = {
+      hihat: [1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0],
+      snare: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+      kicks: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
     },
   ) {
     super();
@@ -161,14 +169,14 @@ export class Drummer extends EventTarget {
     return buffer;
   }
 
-  private playKick(time: number) {
+  private playKick(time: number, note:ActiveNoteState) {
     if (!this.audioCtx || !this.masterGain) return;
     const osc = this.audioCtx.createOscillator();
     const gain = this.audioCtx.createGain();
     osc.type = "sine";
     osc.frequency.setValueAtTime(150, time);
     osc.frequency.exponentialRampToValueAtTime(50, time + 0.1);
-    gain.gain.setValueAtTime(1, time);
+    gain.gain.setValueAtTime(note == 2 ? 1 : 0.5, time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
     osc.connect(gain).connect(this.masterGain);
     osc.start(time);
@@ -177,8 +185,11 @@ export class Drummer extends EventTarget {
     this.dispatchEvent(createChange());
   }
 
-  private playSnare(time: number) {
+  private playSnare(time: number, note:ActiveNoteState) {
     if (!this.audioCtx || !this.masterGain || !this.noiseBuffer) return;
+
+    const gainMult = note == 2 ? 1 : 0.5;
+
     // Noise component
     const noise = this.audioCtx.createBufferSource();
     noise.buffer = this.noiseBuffer;
@@ -186,7 +197,7 @@ export class Drummer extends EventTarget {
     band.type = "bandpass";
     band.frequency.value = 1800;
     const noiseGain = this.audioCtx.createGain();
-    noiseGain.gain.setValueAtTime(1, time);
+    noiseGain.gain.setValueAtTime(gainMult, time);
     noiseGain.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
     noise.connect(band).connect(noiseGain).connect(this.masterGain);
     noise.start(time);
@@ -197,7 +208,7 @@ export class Drummer extends EventTarget {
     const oscGain = this.audioCtx.createGain();
     osc.type = "triangle";
     osc.frequency.setValueAtTime(200, time);
-    oscGain.gain.setValueAtTime(0.6, time);
+    oscGain.gain.setValueAtTime(0.6 * gainMult, time);
     oscGain.gain.exponentialRampToValueAtTime(0.01, time + 0.12);
     osc.connect(oscGain).connect(this.masterGain);
     osc.start(time);
@@ -206,7 +217,7 @@ export class Drummer extends EventTarget {
     this.dispatchEvent(createChange());
   }
 
-  private playHiHat(time: number) {
+  private playHiHat(time: number, note:ActiveNoteState) {
     if (!this.audioCtx || !this.masterGain || !this.noiseBuffer) return;
     const noise = this.audioCtx.createBufferSource();
     noise.buffer = this.noiseBuffer;
@@ -214,7 +225,7 @@ export class Drummer extends EventTarget {
     hp.type = "highpass";
     hp.frequency.value = 7000;
     const gain = this.audioCtx.createGain();
-    gain.gain.setValueAtTime(0.5, time);
+    gain.gain.setValueAtTime(0.5 * (note == 2 ? 1 : 0.5), time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + 0.04);
     noise.connect(hp).connect(gain).connect(this.masterGain);
     noise.start(time);
@@ -223,23 +234,27 @@ export class Drummer extends EventTarget {
     this.dispatchEvent(createChange());
   }
 
-  getTrack(drum: Instrument): boolean[] {
+  getTrack(drum: Instrument): NoteState[] {
     return this.patterns[drum];
   }
 
-  toggleNote(drum: Instrument, note: number, state: boolean) {
+  toggleNote(drum: Instrument, note: number, state: NoteState) {
     this.patterns[drum][note] = state;
     this.dispatchEvent(createChange());
   }
 
-  private isNoteOn(track: Instrument, step: number): boolean {
+  private getNote(track: Instrument, step: number): NoteState {
     return this.patterns[track][step];
   }
 
   private scheduleStep(step: number, time: number) {
-    if (this.isNoteOn("hihat", step)) this.playHiHat(time);
-    if (this.isNoteOn("snare", step)) this.playSnare(time);
-    if (this.isNoteOn("kicks", step)) this.playKick(time);
+    const h = this.getNote("hihat",step);
+    const s = this.getNote("snare",step);
+    const k = this.getNote("kicks",step);
+
+    if (h > 0) this.playHiHat(time,h as ActiveNoteState);
+    if (s > 0) this.playSnare(time,s as ActiveNoteState);
+    if (k > 0) this.playKick(time,k as ActiveNoteState);
   }
 
   private advanceNote() {
