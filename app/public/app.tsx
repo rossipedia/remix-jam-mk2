@@ -10,7 +10,7 @@ import {
 } from "@remix-run/events/key";
 import { press } from "@remix-run/events/press";
 import { Button, ControlGroup, Layout, TempoButton } from "./components.tsx";
-import { Drummer, type Instrument } from "./drummer.ts";
+import { Drummer, type Instrument, type NoteState } from "./drummer.ts";
 import { tempoTap } from "./tempo-event.ts";
 
 function DrumMachine(this: Remix.Handle<Drummer>) {
@@ -26,9 +26,9 @@ function DrumMachine(this: Remix.Handle<Drummer>) {
   if (initialPatterns && initialPatterns.length === 48) {
     let values = initialPatterns.split("");
     drummer = new Drummer(initialBpm, {
-      hihat: values.slice(0, 16).map((v) => v === "1"),
-      snare: values.slice(16, 32).map((v) => v === "1"),
-      kicks: values.slice(32, 48).map((v) => v === "1"),
+      hihat: values.slice(0, 16).map(parseInt) as NoteState[],
+      snare: values.slice(16, 32).map(parseInt) as NoteState[],
+      kicks: values.slice(32, 48).map(parseInt) as NoteState[]
     });
   } else {
     drummer = new Drummer(initialBpm);
@@ -38,10 +38,9 @@ function DrumMachine(this: Remix.Handle<Drummer>) {
     let url = `?bpm=${drummer.bpm}&patterns=`;
     url += drummer
       .getTrack("hihat")
-      .map((v) => (v ? "1" : "0"))
       .concat(
-        drummer.getTrack("snare").map((v) => (v ? "1" : "0")),
-        drummer.getTrack("kicks").map((v) => (v ? "1" : "0")),
+        drummer.getTrack("snare"),
+        drummer.getTrack("kicks"),
       )
       .join("");
     window.history.replaceState({}, "", url);
@@ -391,6 +390,10 @@ function Track(
             backgroundColor: "rgb(0 255 0)",
             opacity: 0.9,
           },
+          "& button.on-accent": {
+            backgroundColor: "rgb(255 0 0)",
+            opacity: 0.9,
+          },
           "& button:focus-visible": {
             outline: "2px solid rgb(0 255 0)",
             outlineOffset: "2px",
@@ -401,10 +404,12 @@ function Track(
         {pattern.map((state, note) => (
           <button
             type="button"
-            class={state ? "on" : "off"}
+            class={state == 1 ? "on" : state == 2 ? "on-accent" : "off"}
             on={[
-              press(() => {
-                drummer.toggleNote(instrument, note, !state);
+              press((e) => { 
+                const isAccent = e.detail.originalEvent.shiftKey;
+                const s = isAccent ? (state == 2 ? 0 : 2) : (state == 0 ? 1 : 0);                 
+                drummer.toggleNote(instrument, note, s);
               }),
             ]}
             tabIndex={-1}
